@@ -4,8 +4,11 @@ groups:
   - name: yunqi_mall_middleware
     interval: 15s
     rules:
+      # 注意：up 只反映 Prometheus 能否抓到 mysqld-exporter 自身。
+      # MySQL 停掉后 exporter 进程仍在、端口照常响应，up 依旧是 1，
+      # 所以必须叠加 mysql_up（exporter 探测 MySQL 连接的结果）才能识别实例故障。
       - alert: MySQLDown
-        expr: up{service="mysql"} == 0
+        expr: mysql_up == 0 or up{service="mysql"} == 0
         for: 1m
         labels:
           severity: P0
@@ -14,8 +17,9 @@ groups:
           summary: "MySQL 实例不可达"
           description: "订单、支付、用户三个服务的写入链路将全部失败。"
 
+      # 同理：redis_up 才是「exporter 能否连上 Redis」的真实信号
       - alert: RedisDown
-        expr: up{service="redis"} == 0
+        expr: redis_up == 0 or up{service="redis"} == 0
         for: 1m
         labels:
           severity: P0

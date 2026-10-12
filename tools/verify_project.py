@@ -59,7 +59,7 @@ EXTERNAL_METRICS = {
     "redis_memory_used_bytes", "redis_memory_max_bytes",
     "redis_keyspace_hits_total", "redis_keyspace_misses_total",
     "redis_commands_processed_total", "redis_connected_clients", "redis_up",
-    "nginx_connections_active", "nginx_connections_accepted",
+    "nginx_up", "nginx_connections_active", "nginx_connections_accepted",
     "nginx_http_requests_total",
     "prometheus_tsdb_head_series",
 }

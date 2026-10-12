@@ -16,8 +16,11 @@ groups:
           summary: "微服务 {{ $labels.service }} 失联"
           description: "Prometheus 已连续 1 分钟抓取不到 {{ $labels.instance }}，服务可能已崩溃或被网络隔离。"
 
+      # 注意：up 只反映 Prometheus 能否抓到 nginx-exporter 自身。
+      # 网关容器停掉后 exporter 进程仍在、端口照常响应，up 依旧是 1，
+      # 所以必须叠加 nginx_up（exporter 探测网关 stub_status 的结果）才能识别网关故障。
       - alert: GatewayDown
-        expr: up{layer="gateway"} == 0
+        expr: nginx_up == 0 or up{layer="gateway"} == 0
         for: 1m
         labels:
           severity: P0
