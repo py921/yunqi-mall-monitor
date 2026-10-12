@@ -86,12 +86,16 @@ SELECT CONCAT('yunqi_user_', LPAD(nums.n, 4, '0')),
        CONCAT('138', LPAD(nums.n, 8, '0')),
        SHA2('Mall@123456', 256),
        1 + (nums.n % 3)
+-- 注意：位数必须真的覆盖到 200。只有 a.i / b.i 两个十位集合时，
+-- 实际只能生成 9 + 90 + 1 = 100 个用户，而压测用户池是 200，
+-- 会导致一半的登录与用户查询打到不存在的用户上（401 / 404）。
 FROM (
-    SELECT a.i + b.i * 10 + 1 AS n
+    SELECT a.i + b.i * 10 + c.i * 100 + 1 AS n
     FROM (SELECT 0 AS i UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
           UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) a
     CROSS JOIN (SELECT 0 AS i UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
           UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) b
+    CROSS JOIN (SELECT 0 AS i UNION SELECT 1) c
 ) nums
 WHERE nums.n <= 200;
 

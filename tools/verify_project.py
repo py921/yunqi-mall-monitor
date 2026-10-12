@@ -254,6 +254,30 @@ def check_targets() -> None:
 # --------------------------------------------------------------------------- #
 # 4b. 账号密码在多处配置之间必须一致
 # --------------------------------------------------------------------------- #
+def seed_user_count(schema: str) -> int | None:
+    """算出 01-schema.sql 实际上能生成多少个种子用户。
+
+    只看 `WHERE nums.n <= N` 这个上限是假绿：真正决定条数的是
+    交叉连接里各个位集合的大小与它们的乘法权重。所以要按
+    「每一位最多能到多少」反推，再和上限取小。
+    """
+    head = re.search(r"INSERT INTO t_user(.*?)\s+nums\s*\n\s*WHERE", schema, re.S)
+    if not head:
+        return None
+    body = head.group(1)
+    cap = re.search(r"WHERE\s+nums\.n\s*<=\s*(\d+)", schema)
+    if not cap:
+        return None
+
+    weights = {alias: int(times or 1) for alias, times in
+               re.findall(r"([a-z])\.i(?:\s*\*\s*(\d+))?", body)}
+    total = 1
+    for values, alias in re.findall(r"\(([^()]+)\)\s+([a-z])\b", body):
+        size = values.count("UNION SELECT") + 1
+        total += (size - 1) * weights.get(alias, 1)
+    return min(total, int(cap.group(1)))
+
+
 def check_credentials_consistency() -> None:
     def read(*parts: str) -> str:
         return open(os.path.join(ROOT, *parts), encoding="utf-8").read()
@@ -293,12 +317,16 @@ def check_credentials_consistency() -> None:
         if missing:
             fail(f"{label} 缺失于：{', '.join(missing)}")
 
-    # 流量生成器的用户池规模必须和 SQL 里生成的种子用户数一致
-    seed_count = re.search(r"WHERE\s+nums\.n\s*<=\s*(\d+)", schema)
+    # 流量生成器的用户池规模必须和 SQL 里真正生成出来的种子用户数一致。
+    # 这里要按交叉连接的实际取值为准，不能用 WHERE 里写的上限替代，
+    # 否则上限写得再大也照样「校验通过、线上 404」。
+    seed_count = seed_user_count(schema)
     pool_default = re.search(r'USER_POOL",\s*"(\d+)"', gen_py)
-    if seed_count and pool_default and seed_count.group(1) != pool_default.group(1):
-        fail(f"SQL 生成 {seed_count.group(1)} 个种子用户，但 traffic-generator "
-             f"默认用户池为 {pool_default.group(1)}，会出现大量 404 登录失败")
+    if seed_count is None:
+        fail("无法从 01-schema.sql 解析种子用户数量，请检查 INSERT INTO t_user 语句")
+    elif pool_default and seed_count != int(pool_default.group(1)):
+        fail(f"SQL 实际只能生成 {seed_count} 个种子用户，但 traffic-generator "
+             f"默认用户池为 {pool_default.group(1)}，会出现大量 404 与登录失败")
 
 
 # --------------------------------------------------------------------------- #
