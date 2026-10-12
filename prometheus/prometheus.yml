@@ -1,0 +1,55 @@
+# 云启商城（YunQi Mall）监控平台 —— Prometheus 主配置
+# 采集目标全部走 file_sd 服务发现：新增/下线服务只需改 targets/*.json，无需重启 Prometheus
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    platform: yunqi-mall
+    cluster: yunqi-mall-dev
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # ---------------------------------------------------------------- 自监控
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+
+  # ---------------------------------------------------------------- 微服务层
+  - job_name: mall-microservice
+    metrics_path: /metrics
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/services.json"]
+        refresh_interval: 30s
+    relabel_configs:
+      # 保留 file_sd 里声明的 service/layer/env/team 标签
+      - source_labels: [__address__]
+        target_label: instance
+        regex: "([^:]+):.*"
+        replacement: "$1"
+
+  # ---------------------------------------------------------------- 中间件层
+  - job_name: mall-middleware
+    metrics_path: /metrics
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/middleware.json"]
+        refresh_interval: 30s
+
+  # ---------------------------------------------------------------- 接入层
+  - job_name: mall-gateway
+    metrics_path: /metrics
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/gateway.json"]
+        refresh_interval: 30s

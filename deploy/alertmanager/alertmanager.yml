@@ -1,0 +1,55 @@
+# Alertmanager 告警路由：按 P0 / P1 / P2 分级，并做告警抑制防止风暴
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: p1-warning
+  group_by: ["alertname", "service", "severity"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # P0：核心链路中断，10 秒内就要发出去，1 小时重复提醒
+    - matchers: ['severity="P0"']
+      receiver: p0-oncall
+      group_wait: 10s
+      repeat_interval: 1h
+      continue: true
+    # P1：质量问题，允许合并后发送
+    - matchers: ['severity="P1"']
+      receiver: p1-warning
+      group_wait: 30s
+      repeat_interval: 3h
+    # P2：观察项，低频提醒
+    - matchers: ['severity="P2"']
+      receiver: p2-info
+      group_wait: 1m
+      repeat_interval: 12h
+
+# 抑制规则：上游挂了就不要再刷下游的噪音告警
+inhibit_rules:
+  - source_matchers: ['severity="P0"', 'alertname="MicroserviceDown"']
+    target_matchers: ['severity=~"P1|P2"']
+    equal: ["service"]
+  - source_matchers: ['severity="P0"', 'alertname=~"MySQLDown|RedisDown"']
+    target_matchers: ['category="middleware"', 'severity=~"P1|P2"']
+    equal: ["instance"]
+
+# 接收器：默认打到内置的 alert-webhook，可在日志里直接看到告警内容。
+# 生产环境换成钉钉/企业微信机器人，见 README「接入钉钉」章节。
+receivers:
+  - name: p0-oncall
+    webhook_configs:
+      - url: "http://alert-webhook:8080/webhook/p0"
+        send_resolved: true
+
+  - name: p1-warning
+    webhook_configs:
+      - url: "http://alert-webhook:8080/webhook/p1"
+        send_resolved: true
+
+  - name: p2-info
+    webhook_configs:
+      - url: "http://alert-webhook:8080/webhook/p2"
+        send_resolved: true

@@ -1,0 +1,70 @@
+# 中间件告警：MySQL / Redis 是整条链路的底座，它们挂了所有服务都会受影响
+
+groups:
+  - name: yunqi_mall_middleware
+    interval: 15s
+    rules:
+      - alert: MySQLDown
+        expr: up{service="mysql"} == 0
+        for: 1m
+        labels:
+          severity: P0
+          category: middleware
+        annotations:
+          summary: "MySQL 实例不可达"
+          description: "订单、支付、用户三个服务的写入链路将全部失败。"
+
+      - alert: RedisDown
+        expr: up{service="redis"} == 0
+        for: 1m
+        labels:
+          severity: P0
+          category: middleware
+        annotations:
+          summary: "Redis 实例不可达"
+          description: "在线用户统计与商品缓存将失效，请求会全部击穿到 MySQL。"
+
+      - alert: MySQLSlowQueryBurst
+        expr: rate(mysql_global_status_slow_queries[5m]) > 0.2
+        for: 5m
+        labels:
+          severity: P1
+          category: middleware
+        annotations:
+          summary: "MySQL 慢查询速率异常"
+          description: "近 5 分钟慢查询速率 {{ $value | printf \"%.2f\" }} 次/秒。"
+
+      - alert: MySQLConnectionHigh
+        expr: |
+          mysql_global_status_threads_connected
+          / mysql_global_variables_max_connections > 0.8
+        for: 5m
+        labels:
+          severity: P1
+          category: middleware
+        annotations:
+          summary: "MySQL 连接数接近上限"
+          description: "连接使用率 {{ $value | humanizePercentage }}，可能出现连接耗尽。"
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        for: 5m
+        labels:
+          severity: P1
+          category: middleware
+        annotations:
+          summary: "Redis 内存使用率超过 85%"
+          description: "当前使用率 {{ $value | humanizePercentage }}，接近 maxmemory 触发淘汰。"
+
+      - alert: RedisHitRateLow
+        expr: |
+          rate(redis_keyspace_hits_total[5m])
+          /
+          (rate(redis_keyspace_hits_total[5m]) + rate(redis_keyspace_misses_total[5m])) < 0.8
+        for: 5m
+        labels:
+          severity: P2
+          category: middleware
+        annotations:
+          summary: "Redis 缓存命中率低于 80%"
+          description: "当前命中率 {{ $value | humanizePercentage }}，大量请求已回源数据库。"

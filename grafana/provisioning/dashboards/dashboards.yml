@@ -1,0 +1,14 @@
+apiVersion: 1
+
+# 大屏自动加载：容器启动后 Grafana 会扫描该目录并注册所有 JSON
+providers:
+  - name: yunqi-mall
+    orgId: 1
+    folder: 云启商城监控
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFileStructure: false

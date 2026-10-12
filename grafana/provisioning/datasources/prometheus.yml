@@ -1,0 +1,16 @@
+apiVersion: 1
+
+# Grafana 数据源：与 dashboard JSON 里引用的 uid 必须一致
+datasources:
+  - name: Prometheus
+    uid: yunqi-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s
+      httpMethod: POST
+      prometheusType: Prometheus
+      prometheusVersion: 2.53.3

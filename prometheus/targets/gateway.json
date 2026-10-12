@@ -1,0 +1,11 @@
+[
+  {
+    "targets": ["nginx-exporter:9113"],
+    "labels": {
+      "service": "api-gateway",
+      "layer": "gateway",
+      "env": "dev",
+      "team": "mall-infra"
+    }
+  }
+]

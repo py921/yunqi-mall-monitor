@@ -1,0 +1,20 @@
+[
+  {
+    "targets": ["mysqld-exporter:9104"],
+    "labels": {
+      "service": "mysql",
+      "layer": "middleware",
+      "env": "dev",
+      "team": "mall-middleware"
+    }
+  },
+  {
+    "targets": ["redis-exporter:9121"],
+    "labels": {
+      "service": "redis",
+      "layer": "middleware",
+      "env": "dev",
+      "team": "mall-middleware"
+    }
+  }
+]

@@ -1,0 +1,71 @@
+# 服务可用性与调用质量告警
+# 注意：alertname / group 名只能用字母、数字、下划线
+
+groups:
+  - name: yunqi_mall_service_health
+    interval: 15s
+    rules:
+      # ---------------------------------------------------------------- 可用性
+      - alert: MicroserviceDown
+        expr: up{layer="microservice"} == 0
+        for: 1m
+        labels:
+          severity: P0
+          category: availability
+        annotations:
+          summary: "微服务 {{ $labels.service }} 失联"
+          description: "Prometheus 已连续 1 分钟抓取不到 {{ $labels.instance }}，服务可能已崩溃或被网络隔离。"
+
+      - alert: GatewayDown
+        expr: up{layer="gateway"} == 0
+        for: 1m
+        labels:
+          severity: P0
+          category: availability
+        annotations:
+          summary: "API 网关 {{ $labels.service }} 失联"
+          description: "外部流量入口不可用，全部业务接口受影响。"
+
+      # ---------------------------------------------------------------- 质量
+      - alert: ServiceHighErrorRate
+        expr: |
+          sum by (service) (rate(http_requests_total{layer="microservice", status=~"5.."}[5m]))
+          /
+          sum by (service) (rate(http_requests_total{layer="microservice"}[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: P1
+          category: quality
+        annotations:
+          summary: "服务 {{ $labels.service }} 5xx 错误率超过 5%"
+          description: "当前错误率 {{ $value | humanizePercentage }}，请检查该服务的异常日志。"
+
+      - alert: ServiceHighLatencyP99
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le, service) (rate(http_request_duration_seconds_bucket{layer="microservice"}[5m]))
+          ) > 1
+        for: 3m
+        labels:
+          severity: P1
+          category: latency
+        annotations:
+          summary: "服务 {{ $labels.service }} P99 耗时超过 1s"
+          description: "当前 P99 = {{ $value | humanizeDuration }}，体验已明显劣化。"
+
+      # ---------------------------------------------------------------- 依赖
+      - alert: DownstreamCallFailureHigh
+        expr: |
+          sum by (caller, target) (
+            rate(downstream_requests_total{status=~"5..|timeout|unreachable|error"}[5m])
+          )
+          /
+          sum by (caller, target) (rate(downstream_requests_total[5m])) > 0.1
+        for: 2m
+        labels:
+          severity: P1
+          category: dependency
+        annotations:
+          summary: "{{ $labels.caller }} 调用 {{ $labels.target }} 失败率超过 10%"
+          description: "服务依赖链路劣化，失败率 {{ $value | humanizePercentage }}。"

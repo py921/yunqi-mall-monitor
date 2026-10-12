@@ -1,0 +1,324 @@
+# =====================================================================
+# 云启商城（YunQi Mall）微服务监控平台
+#
+# 一键启动：cp .env.example .env && docker compose up -d --build
+# 停止：    docker compose down
+# 清空数据：docker compose down -v
+# =====================================================================
+name: yunqi-mall
+
+# ---------------------------------------------------------------------
+# 微服务公共环境变量
+# ---------------------------------------------------------------------
+x-service-env: &service-env
+  APP_ENV: ${APP_ENV:-dev}
+  APP_VERSION: ${APP_VERSION:-1.0.0}
+  MYSQL_HOST: mysql
+  MYSQL_PORT: "3306"
+  MYSQL_USER: ${MYSQL_USER:-mall}
+  MYSQL_PASSWORD: ${MYSQL_PASSWORD:-Mall@2024}
+  MYSQL_DATABASE: ${MYSQL_DATABASE:-yunqi_mall}
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  ORDER_SERVICE_URL: http://order-service:8001
+  PAY_SERVICE_URL: http://pay-service:8002
+  USER_SERVICE_URL: http://user-service:8003
+  ORDER_FAIL_RATE: ${ORDER_FAIL_RATE:-0.06}
+  PAY_CALLBACK_FAIL_RATE: ${PAY_CALLBACK_FAIL_RATE:-0.035}
+  LOGIN_FAIL_RATE: ${LOGIN_FAIL_RATE:-0.03}
+
+# 三个微服务 + 告警接收器共用同一个镜像，靠启动命令区分角色
+x-service-base: &service-base
+  build:
+    context: ./services
+  image: yunqi-mall/microservice:${APP_VERSION:-1.0.0}
+  restart: unless-stopped
+  environment:
+    <<: *service-env
+  networks:
+    - mall-net
+
+services:
+  # ------------------------------------------------------------------ #
+  # 接入层：Nginx API 网关
+  # ------------------------------------------------------------------ #
+  api-gateway:
+    image: nginx:1.27-alpine
+    container_name: yunqi-api-gateway
+    ports:
+      - "${GATEWAY_PORT:-80}:80"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/nginx/conf.d:/etc/nginx/conf.d:ro
+    depends_on:
+      - order-service
+      - pay-service
+      - user-service
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks: [mall-net]
+
+  # ------------------------------------------------------------------ #
+  # 微服务层
+  # ------------------------------------------------------------------ #
+  order-service:
+    <<: *service-base
+    container_name: yunqi-order-service
+    command: ["gunicorn", "--bind", "0.0.0.0:8001", "--workers", "1",
+              "--threads", "8", "--timeout", "30",
+              "--access-logfile", "-", "order_service.app:app"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/health',timeout=3).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  pay-service:
+    <<: *service-base
+    container_name: yunqi-pay-service
+    command: ["gunicorn", "--bind", "0.0.0.0:8002", "--workers", "1",
+              "--threads", "8", "--timeout", "30",
+              "--access-logfile", "-", "pay_service.app:app"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8002/health',timeout=3).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  user-service:
+    <<: *service-base
+    container_name: yunqi-user-service
+    command: ["gunicorn", "--bind", "0.0.0.0:8003", "--workers", "1",
+              "--threads", "8", "--timeout", "30",
+              "--access-logfile", "-", "user_service.app:app"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8003/health',timeout=3).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ------------------------------------------------------------------ #
+  # 中间件层
+  # ------------------------------------------------------------------ #
+  mysql:
+    image: mysql:8.0
+    container_name: yunqi-mysql
+    command:
+      - "--character-set-server=utf8mb4"
+      - "--collation-server=utf8mb4_unicode_ci"
+      - "--slow-query-log=ON"
+      - "--long-query-time=0.5"
+      - "--slow-query-log-file=/var/lib/mysql/slow.log"
+      - "--max-connections=200"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-Root@2024}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-yunqi_mall}
+      MYSQL_USER: ${MYSQL_USER:-mall}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-Mall@2024}
+      TZ: Asia/Shanghai
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./deploy/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    restart: unless-stopped
+    networks: [mall-net]
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: yunqi-redis
+    command:
+      - "redis-server"
+      - "--appendonly"
+      - "yes"
+      - "--maxmemory"
+      - "256mb"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+    restart: unless-stopped
+    networks: [mall-net]
+
+  # ------------------------------------------------------------------ #
+  # Exporter：把中间件与网关的能力翻译成 Prometheus 指标
+  # ------------------------------------------------------------------ #
+  mysqld-exporter:
+    image: prom/mysqld-exporter:v0.15.1
+    container_name: yunqi-mysqld-exporter
+    command:
+      - "--mysqld.address=mysql:3306"
+      - "--mysqld.username=exporter"
+    environment:
+      MYSQLD_EXPORTER_PASSWORD: ${MYSQL_EXPORTER_PASSWORD:-Exporter@2024}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [mall-net]
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0
+    container_name: yunqi-redis-exporter
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [mall-net]
+
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:1.3.0
+    container_name: yunqi-nginx-exporter
+    command:
+      - "--nginx.scrape-uri=http://api-gateway:80/stub_status"
+    depends_on:
+      - api-gateway
+    restart: unless-stopped
+    networks: [mall-net]
+
+  # ------------------------------------------------------------------ #
+  # 采集 / 告警 / 可视化
+  # ------------------------------------------------------------------ #
+  prometheus:
+    image: prom/prometheus:v2.53.3
+    container_name: yunqi-prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - ./prometheus/targets:/etc/prometheus/targets:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9090/-/healthy"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      - alertmanager
+    restart: unless-stopped
+    networks: [mall-net]
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: yunqi-alertmanager
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    volumes:
+      - ./deploy/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    restart: unless-stopped
+    networks: [mall-net]
+
+  alert-webhook:
+    <<: *service-base
+    container_name: yunqi-alert-webhook
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      APP_VERSION: ${APP_VERSION:-1.0.0}
+      DINGTALK_WEBHOOK: ${DINGTALK_WEBHOOK:-}
+    command: ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1",
+              "--threads", "4", "--timeout", "30", "alert_webhook.app:app"]
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=3).status==200 else 1)"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    container_name: yunqi-grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/01-service-overview.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks: [mall-net]
+
+  # ------------------------------------------------------------------ #
+  # 流量生成：让所有指标都有真实数据来源
+  # ------------------------------------------------------------------ #
+  traffic-generator:
+    build:
+      context: ./traffic-generator
+    image: yunqi-mall/traffic-generator:${APP_VERSION:-1.0.0}
+    container_name: yunqi-traffic-generator
+    environment:
+      GATEWAY_URL: http://api-gateway
+      TPS: ${GENERATOR_TPS:-6}
+      USER_POOL: ${GENERATOR_USER_POOL:-200}
+    depends_on:
+      - api-gateway
+    restart: unless-stopped
+    networks: [mall-net]
+
+volumes:
+  mysql-data:
+  redis-data:
+  prometheus-data:
+  alertmanager-data:
+  grafana-data:
+
+networks:
+  mall-net:
+    driver: bridge
